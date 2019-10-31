@@ -1,0 +1,317 @@
+---
+title: 'Lightning Challenge: R'
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+#### The Project
+This exercise follows the tropical storm exploratory analysis by Scott Stolzman [posted here](http://www.stoltzmaniac.com/exploratory-data-analysis-of-tropical-storms-in-r/). In this **exploratory data analysis (EDA)**, Stolzman highlights the value of conducting an EDA on a newly acquired dataset. His aim, in this case, was to get a sense of the dataset's structure and then test some statistics, plots, and calculations. By doing this, Stolzman attempts to uncover some relationships in the data. In a real-world context, this would inform a future **explanatory** data analysis to communicate his findings to an audience.  
+
+I primarily chose this project to follow, because I have a personal interest in and familiarity with hurricanes. I also chose this project over the other natural disaster EDAs I found (listed at the bottom of this document), because the underlying dataset is particularly clean. I could forgo the wrangling other datasets required and jump straight into the analysis.  
+  
+  
+#### Modifications
+In addition to following Stolzman's EDA, I decided to take this opportunity to install and learn R Markdown. I felt like this would help me communicate my work in R as I become more familiar with it. I found [this document](https://www.rstudio.com/wp-content/uploads/2016/03/rmarkdown-cheatsheet-2.0.pdf) to be a particularly helpful guide to R Markdown basics, but for the most part it feels just like working in a Python notebook.  
+
+Since Stolzman's project was more of a walkthrough on how to conduct an EDA in R, I decided to, rather than strictly reproduce his work, to follow his instructions. Thus, my visualizations are similar to his, but my annotations are different. I have also added a few basic visualizations that answer some of the questions I would have about this data:  
+1. How does the frequency of hurricanes change over the course of a year?  
+2. Is the number of storms per year random, or does this follow a pattern over time?  
+3. Are tropical storms and hurricanes, on average, increasing in strength?  
+
+#### Exploratory Data Analysis
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.align = 'center')
+```
+```{r load_libraries}
+library(tidyverse)
+library(ggthemes)
+library(ggmap)
+library(htmlwidgets)
+library(lubridate)
+library(magrittr)
+```
+
+##### Step 1:  Take a look at your data set and see how it is laid out  
+```{r read_data}
+# data source https://data.world/dhs/historical-tropical-storm
+data = read_csv('RProjects/StormTracks/Historical_Tropical_Storm_Tracks.csv')
+knitr::kable(head(data))
+```
+
+#### Step 2:  View some descriptive statistics  
+
+```{r}
+knitr::kable(summary(data %>% select(YEAR, 
+                                     MONTH, 
+                                     DAY,
+                                     WIND_KTS,
+                                     PRESSURE)))
+```
+
+
+Just as Stolzman saw, the things that pop out to me in this are:  
+* I now know that the date range of this dataset is Jan 1, 1851 to Dec 31, 2008
+* Pressure's minimum valuea and 1st quartile are 0, which probably means that there is no pressure data available for some of the instances, likely earlier ones. This will be helpful to know if I decide to plot pressure.
+* I can also see that there is a range of windspeed from 10-165 knots. If this data were to be communicated to an audience without much technical knowledge of storms, wind speeds might mean more in MPH. I'll go ahead and add an attribute WIND_MPH to reflect this, so I don't have to include that calculation when generating any charts later.
+
+```{r}
+data <- within(data, WIND_MPH <- WIND_KTS * 1.15)
+knitr::kable(head(data))
+```
+
+
+It would also be helpful to have a more readable version of the dates if I want to do quick line charts later. To combine YEAR, MONTH, and DAY into a DATE attribute, I followed [these instructions](https://druedin.com/2013/11/23/combining-three-date-variables-in-r/).
+
+```{r}
+data <- within(data, DATE <- as.Date(paste(YEAR, MONTH, DAY, sep='-')))
+knitr::kable(head(data))
+```
+  
+##### Step 3: Make a basic plot  
+
+```{r, fig.height = 4}
+df = data %>%
+  filter(NAME != 'NOTNAMED' & NAME != 'SUBTROP1') %>%
+  group_by(YEAR) %>%
+  summarise(Distinct_Storms = n_distinct(NAME))
+p = ggplot(df, aes(x = YEAR, y = Distinct_Storms)) + theme_economist()
+p + geom_line(size = 1.1) + 
+  ggtitle("Number of Storms Per Year") + 
+  geom_smooth(method='lm', se = FALSE) + 
+  ylab("Storms")
+```
+I decided to visualize the strength of storms over time as well. First, I created a dataframe that aggregated the average wind speed by year. I ran into trouble with the auto-generated column names, but learned how to use setName [here](https://stackoverflow.com/questions/15309205/name-columns-within-aggregate-in-r).
+
+```{r}
+average_strength <- setNames(aggregate(data$WIND_MPH, by=list(data$YEAR), mean), c("year", "average_wind_mph"))
+head(average_strength)
+```
+
+
+Then, I rewrote Stolzman's original line chart to reflect these averages, adding new axis labels and changing the theme:
+
+```{r, fig.height = 4}
+df = average_strength
+p = ggplot(df, aes(x = year, y = average_wind_mph)) + theme_excel_new()
+p + geom_line(size = 1.1) + 
+  ggtitle("Average Storm Wind Speed") + 
+  geom_smooth(method='lm', se = FALSE) + 
+  ylab("Average Wind Speed, MPH") +
+  xlab("Year")
+```
+This answers my question *3. Are tropical storms and hurricanes, on average, increasing in strength?*. From this, it seems, they are actually decreasing in strength, however, this points to a potential area for additional research. They could be getting less strong, or perhaps, changing methods in storm tracking has led to more storms, including smaller ones, being tracked overall. Limiting this graph to 1951-2008 already tells a different story with fewer outliers:
+
+```{r, fig.height = 4}
+df = average_strength[102:158, ]
+p = ggplot(df, aes(x = year, y = average_wind_mph)) + theme_excel_new()
+p + geom_line(size = 1.1) + 
+  ggtitle("Average Storm Wind Speed") + 
+  geom_smooth(method='lm', se = FALSE) + 
+  ylab("Average Wind Speed, MPH") +
+  xlab("Year")
+```
+
+##### Step 4: Make some calculations
+
+Here, Stolzman limited the instances included in the calculations to storms in 1951 or later since storms were first named in 1951 and, based on this dataset, could thus be identified as distinct storms.
+
+```{r}
+pct.diff = function(x){round((x-lag(x))/lag(x),2)}
+act.diff = function(x){round((x-lag(x)),2)}
+df = data %>%
+  arrange(YEAR) %>%
+  filter(NAME != 'NOTNAMED' & NAME != 'SUBTROP1') %>%
+  group_by(YEAR) %>%
+  summarise(Distinct_Storms = n_distinct(NAME)) %>%
+  mutate(Distinct_Storms_Change = act.diff(Distinct_Storms),
+         Distinct_Storms_Pct_Change = pct.diff(Distinct_Storms)) %>%
+  na.omit() %>%
+  arrange(YEAR)
+df$YEAR = factor(df$YEAR)
+knitr::kable(head(df))
+```
+```{r}
+knitr::kable(summary(df %>% select(-YEAR)))
+```
+
+
+According to Sholzman: 
+>From the table we can state the following for the given time period:  
+
+>  * The mean number of storms is 23 per year (with a minimum of 6 and maximum of 43)
+  * The mean change in the number of storms per year is 0.34 (with a minimum of -15 and maximum of 16)
+  * The mean percent change in the number of storms per year is 6% (with a minimum of -42% and maximum of 114%)  
+
+It looks like this information will be useful in answering my question *2. Is the number of storms per year random, or does this follow a pattern over time?*
+
+##### Step 5: Make a more interesting plot  
+
+```{r, fig.height = 4}
+df = data %>%
+  filter(NAME != 'NOTNAMED' & NAME != 'SUBTROP1') %>%
+  filter(grepl("H", CAT)) %>%
+  group_by(YEAR,CAT) %>%
+  summarise(Distinct_Storms = n_distinct(NAME))
+df$CAT = factor(df$CAT)
+p = ggplot(df, aes(x = YEAR, y = Distinct_Storms, col = CAT)) + theme_economist()
+p + geom_line(size = 1.1) + 
+  scale_color_brewer(direction = -1, palette = "Spectral") + 
+  ggtitle("Number of Storms Per Year By Category (H)") + 
+  facet_wrap(~CAT, scales = "free_x") + 
+  geom_smooth(method = 'lm', se = FALSE, col = 'black') +
+  theme(axis.text.x = element_text(angle=90), legend.position = 'none') + 
+  ylab('Storms')
+```
+  
+Sholzman filtered out all tropical storms when creating this chart, but I decided to see what it would look like for all storm types.
+
+```{r, fig.height = 4}
+df = data %>%
+  filter(NAME != 'NOTNAMED' & NAME != 'SUBTROP1') %>%
+  group_by(YEAR,CAT) %>%
+  summarise(Distinct_Storms = n_distinct(NAME))
+df$CAT = factor(df$CAT)
+p = ggplot(df, aes(x = YEAR, y = Distinct_Storms, col = CAT)) + theme_excel_new()
+p + geom_line(size = 1.1) + 
+  ggtitle("Number of Storms Per Year By Category (H)") + 
+  facet_wrap(~CAT, scales = "free_x") + 
+  geom_smooth(method = 'lm', se = FALSE, col = 'black') +
+  theme(axis.text.x = element_text(angle=90), legend.position = 'none') + 
+  ylab('Storms')
+```
+
+It looks like, then the number of Hurricanes is very gradually increasing, while the number of tropical storms (pink) and tropical depressions (purple) are really on the rise. It would be interesting to dive deeper into why this might be.
+
+##### Step 6: Make a filtered calculation  
+
+```{r}
+df = data %>%
+  arrange(YEAR) %>%
+  filter(grepl("H", CAT)) %>%
+  filter(NAME != 'NOTNAMED' & NAME != 'SUBTROP1') %>%
+  group_by(YEAR) %>%
+  summarise(Distinct_Storms = n_distinct(NAME)) %>%
+  mutate(Distinct_Storms_Change = act.diff(Distinct_Storms),
+         Distinct_Storms_Pct_Change = pct.diff(Distinct_Storms)) %>%
+  na.omit() %>%
+  arrange(YEAR)
+knitr::kable(summary(df %>% select(-YEAR)))
+```
+
+Here, Sholzman makes a good point that:
+
+>While it doesn't really make sense to say "we had an average growth of 0.05 hurricanes per year between 1950 and 2010" ... it may make sense to say "we saw an average of growth of 8% per year in the number of hurricanes between 1950 and 2010."  
+
+So it's much clearer to say:
+
+> During EDA we discovered an average of growth of 8% per year in the number of hurricanes between 1950 and 2010. 
+
+##### Step 7: Try visualizing your statements  
+
+```{r, fig.height = 3, fig.width = 9}
+df = data %>%
+  filter(NAME != 'NOTNAMED' & NAME != 'SUBTROP1') %>%
+  filter(grepl("H", CAT)) %>%
+  group_by(YEAR) %>%
+  summarise(Distinct_Storms = n_distinct(NAME)) %>%
+  mutate(Distinct_Storms_Pct_Change = pct.diff(Distinct_Storms))
+p = ggplot(df,aes(x = Distinct_Storms_Pct_Change)) + theme_economist()
+p1 = p + geom_histogram(bins = 20) +
+  ggtitle("YoY % Change Density") +
+  scale_x_continuous(labels = scales::percent) +
+  ylab('') + xlab('YoY % Change in Hurricanes')
+p2 = p + geom_density(fill='darkgrey',alpha=0.5) +
+  ggtitle("YoY % Change Density") +
+  scale_x_continuous(labels = scales::percent) +
+  ylab('') + xlab('YoY % Change in Hurricanes')
+gridExtra::grid.arrange(p1,p2,ncol=2)
+```
+
+Here Sholzman created a histogram of percent change in hurricane counts. I decided to also revisit my final question *1. How does the frequency of hurricanes change over the course of a year?* to explore another chart type, bar charts. I ran into a problem here, where MONTH was being read as a continuous variable, so I first had to learn how to convert it to a discrete variable, with the help of [codebook-r](http://www.cookbook-r.com/Manipulating_data/Recoding_data/#recoding-a-continuous-variable-into-categorical-variable). 
+
+```{r}
+data$MONTH <- factor(data$MONTH)
+```
+
+Then I could go on plotting the distribution of storms by month, learning from [STHDA](http://www.sthda.com/english/wiki/ggplot2-axis-ticks-a-guide-to-customize-tick-marks-and-labels#change-tick-mark-labels) how to rename the now discrete MONTH attribute. 
+```{r}
+df = data %>%
+  filter(NAME != 'NOTNAMED' & NAME != 'SUBTROP1') %>%
+  filter(grepl("H", CAT)) %>%
+  group_by(MONTH) %>%
+  summarise(Distinct_Storms = n_distinct(NAME)) 
+p= ggplot(df, aes(MONTH, Distinct_Storms)) + theme_excel_new()
+p + geom_bar(stat= "identity") + 
+  scale_x_discrete(labels=c("1" = "Jan", "2" = "Feb",
+                              "3" = "Mar", "4" = "Apr", "5"= "May", "6"= "Jun", "7"= "Jul", "8" = "Aug", "9"="Sep", "10"="Oct", "11"="Nov", "12"="Dec")) +
+  ggtitle("Number of Storms by Month") 
+```
+Now, we can see a distribution that aligns with what we think of as a "typical" hurricane season. According to [CNN](https://www.cnn.com/2019/09/08/weather/dorian-atlantic-hurricane-season-outlook-wxc/index.html):
+
+>The Atlantic hurricane season, which started on June 1 and lasts until November 30, is just now reaching its peak. Hurricane season peaks on September 10, and during the eight-week period surrounding that date, storms begin to form quickly.
+
+This fits well with what the chart shows.
+
+##### Step 8: Plot another aspect of your data  
+
+I've skipped Sholzman's step 8, since I've already plotted several other aspects of this data along the way.
+
+##### Step 9: Look for a relationship
+
+When copying this code directly from Sholzman, The chart came up empty because I didn't have hexbin installed.
+```{r, fig.height = 4}
+df = data %>% 
+  filter(PRESSURE > 0) %>%
+  filter(grepl("H", CAT)) %>%
+  group_by(CAT,YEAR,MONTH,DAY,LAT,LONG) %>%
+  summarise(MEAN_WIND_KTS = mean(WIND_KTS), MEAN_PRESSURE = mean(PRESSURE)) %>%
+  arrange(MEAN_WIND_KTS)
+df$CAT = factor(df$CAT)
+p = ggplot(df,aes(x=MEAN_WIND_KTS, y = MEAN_PRESSURE, fill = CAT)) + theme_economist()
+p + 
+  geom_hex(alpha = 0.8) +
+  scale_fill_brewer(direction = -1, palette = "Spectral") + 
+  scale_y_continuous(labels = scales::comma)+ 
+  theme(legend.position = 'right') + 
+  ggtitle("Wind KTS vs. Pressure by Category (H)")
+```
+Interested in recreating this chart without the need for hexbin or its calculations, I decided to go a little less complex. I figured that would be better than the alternative blank chart I was getting. I built the following, instead, from scratch, referencing [STHDA](http://www.sthda.com/english/wiki/ggplot2-colors-how-to-change-colors-automatically-and-manually) to learn to group the colors by a third variable and returning to previous sources like [codebook-r](http://www.cookbook-r.com/Manipulating_data/Recoding_data/#recoding-a-continuous-variable-into-categorical-variable) to manipulate the continuous scale.
+
+```{r, fig.height = 4}
+df = data %>% 
+  filter(PRESSURE > 0) %>%
+  filter(grepl("H", CAT))
+p = ggplot(df, aes(x = WIND_MPH, y= PRESSURE, color= CAT)) + theme_grey() 
+p + geom_point()+ 
+  scale_x_continuous(breaks = seq(60, 200, by = 20)) +
+  scale_y_continuous(breaks = seq(880, 1000, by = 20)) +
+  ylab("pressure") +
+  xlab("Wind Speed, mph")+
+  labs(color = "Category") +
+  ggtitle("Wind KTS vs. Pressure by Category (H)")
+```
+By looking at this chart, we can clearly see two things:
+1. Categories of hurricanes are defined by ranges of wind speed, and
+2. Pressure seems to be negatively correlated, with the range of possible pressures for each wind speed being approximately 50 psi.
+
+
+#### What I learned
+To follow this project, I had to learn several things, both about R and RStudio. The first thing I learned was how to install packages in RStudio. I had to quickly learn what pipes were when I started getting errors trying to generate my own graphs. I found [this DataCamp resource](https://www.datacamp.com/community/tutorials/pipe-r-tutorial) very helpful. I also learned how to change the appearence of charts, and would like to learn how to define chart styles in the future. I learned how to filter, group, and calculate data as well as express that data in a variety of charts.   
+
+One thing I couldn't figure out how to fix is that, using themes_excel_new(), my axis titles wouldn't show up, even when they showed up with every other theme. I would like to know how to do that but couldn't find any solutions online.  
+
+During my exploration of R projects, I found several that focused on final visualization generation, rather than EDA. If I had more time, I would have liked to take this project to its logical conclusion and experimented with the charts and maps in Illustrator.  
+  
+
+#### Other projects explored
+I explored these five uses of R to wrangle and analyze data before settling on the tropical storm analysis by Scott Stolzman.
+
+[Visualizing the 2017 Wildfire Season](https://towardsdatascience.com/visualizing-the-2017-wildfire-season-2053fe72525f)  
+[Wildlife Tracking Data in R](http://www.r-gators.com/2018/01/31/wildlife-tracking-data-in-r/)  
+[Historic Wildfire Data: Exploratory Visualization in R](https://www.dataquest.io/blog/r-data-viz-tutorial/)  
+[Analyzing Wildlife Telemetry Data in R](https://www.ckwri.tamuk.edu/sites/default/files/publication/pdfs/2017/leonard_analyzing_wildlife_telemetry_data_in_r.pdf)  
+[Mapping Global Earthquakes and Hurricane Tracks With R](http://david-lallemant.com/mapping-global-earthquakes-and-hurricane-tracks-with-r-2/)
+
